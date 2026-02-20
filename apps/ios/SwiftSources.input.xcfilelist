@@ -20,10 +20,14 @@ Sources/SessionKey.swift
 Sources/Social/AgentProfile.swift
 Sources/Social/NFCAgentCardService.swift
 Sources/Social/SocialAuthorization.swift
+Sources/Social/SocialGraph.swift
 Sources/Social/SocialHub.swift
+Sources/Social/SocialMeeting.swift
+Sources/Social/SocialMemory.swift
 Sources/Social/SocialPeerDiscoveryService.swift
 Sources/Social/SocialPeerTXTRecordCodec.swift
 Sources/Social/SocialProfileStore.swift
+Sources/Social/SocialProtocol.swift
 Sources/Social/SocialSettingsView.swift
 Sources/Settings/SettingsNetworkingHelpers.swift
 Sources/Settings/SettingsTab.swift
