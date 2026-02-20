@@ -65,7 +65,13 @@ enum StatusActivityBuilder {
             }
         }
 
+        if let sceneProfile = appModel.sceneModeState.profile {
+            return StatusPill.Activity(
+                title: sceneProfile.title,
+                systemImage: sceneProfile.systemImage,
+                tint: nil)
+        }
+
         return nil
     }
 }
-

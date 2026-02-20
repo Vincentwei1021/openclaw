@@ -17,6 +17,7 @@ final class TalkModeManager: NSObject {
     private typealias SpeechRequest = SFSpeechAudioBufferRecognitionRequest
     private static let defaultModelIdFallback = "eleven_v3"
     private static let redactedConfigSentinel = "__OPENCLAW_REDACTED__"
+    static let duplicateTranscriptCooldownSeconds: TimeInterval = 1.6
     var isEnabled: Bool = false
     var isListening: Bool = false
     var isSpeaking: Bool = false
@@ -50,6 +51,8 @@ final class TalkModeManager: NSObject {
 
     private var lastHeard: Date?
     private var lastTranscript: String = ""
+    private var lastSubmittedTranscriptKey: String?
+    private var lastSubmittedTranscriptAt: Date?
     private var loggedPartialThisCycle: Bool = false
     private var lastSpokenText: String?
     private var lastInterruptedAtSeconds: Double?
@@ -717,6 +720,14 @@ final class TalkModeManager: NSObject {
     }
 
     private func processTranscript(_ transcript: String, restartAfter: Bool) async {
+        if self.shouldSkipDuplicateTranscript(transcript) {
+            GatewayDiagnostics.log("talk: skip duplicate transcript")
+            if restartAfter {
+                await self.start()
+            }
+            return
+        }
+
         self.isListening = false
         self.captureMode = .idle
         self.statusText = "Thinking…"
@@ -815,6 +826,47 @@ final class TalkModeManager: NSObject {
         if restartAfter {
             await self.start()
         }
+    }
+
+    private func shouldSkipDuplicateTranscript(_ transcript: String) -> Bool {
+        let key = Self.normalizedTranscriptKey(transcript)
+        guard !key.isEmpty else { return true }
+        let now = Date()
+        defer {
+            self.lastSubmittedTranscriptKey = key
+            self.lastSubmittedTranscriptAt = now
+        }
+
+        guard let lastKey = self.lastSubmittedTranscriptKey,
+              let lastAt = self.lastSubmittedTranscriptAt
+        else {
+            return false
+        }
+
+        let elapsed = now.timeIntervalSince(lastAt)
+        return Self.isDuplicateTranscript(
+            candidateKey: key,
+            lastKey: lastKey,
+            elapsedSeconds: elapsed,
+            cooldownSeconds: Self.duplicateTranscriptCooldownSeconds)
+    }
+
+    nonisolated static func normalizedTranscriptKey(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    nonisolated static func isDuplicateTranscript(
+        candidateKey: String,
+        lastKey: String?,
+        elapsedSeconds: TimeInterval,
+        cooldownSeconds: TimeInterval) -> Bool
+    {
+        guard !candidateKey.isEmpty else { return false }
+        guard let lastKey, candidateKey == lastKey else { return false }
+        return elapsedSeconds < cooldownSeconds
     }
 
     private func subscribeChatIfNeeded(sessionKey: String) async {

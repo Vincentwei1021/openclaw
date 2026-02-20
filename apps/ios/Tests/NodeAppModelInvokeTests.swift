@@ -30,6 +30,14 @@ private func withUserDefaults<T>(_ updates: [String: Any?], _ body: () throws ->
 }
 
 @MainActor
+private func mountScreen(_ screen: ScreenController) throws -> ScreenWebViewCoordinator {
+    let coordinator = ScreenWebViewCoordinator(controller: screen)
+    _ = coordinator.makeContainerView()
+    _ = try #require(coordinator.managedWebView)
+    return coordinator
+}
+
+@MainActor
 private final class MockWatchMessagingService: WatchMessagingServicing, @unchecked Sendable {
     var currentStatus = WatchMessagingStatus(
         supported: true,
@@ -127,6 +135,8 @@ private final class MockWatchMessagingService: WatchMessagingServicing, @uncheck
 
     @Test @MainActor func handleInvokeCanvasCommandsUpdateScreen() async throws {
         let appModel = NodeAppModel()
+        let coordinator = try mountScreen(appModel.screen)
+        defer { coordinator.teardown() }
         appModel.screen.navigate(to: "http://example.com")
 
         let present = BridgeInvokeRequest(id: "present", command: OpenClawCanvasCommand.present.rawValue)

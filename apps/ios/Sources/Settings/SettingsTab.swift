@@ -25,6 +25,7 @@ struct SettingsTab: View {
     @AppStorage("talk.voiceDirectiveHint.enabled") private var talkVoiceDirectiveHintEnabled: Bool = true
     @AppStorage("camera.enabled") private var cameraEnabled: Bool = true
     @AppStorage("location.enabledMode") private var locationEnabledModeRaw: String = OpenClawLocationMode.off.rawValue
+    @AppStorage("location.sceneMode") private var locationSceneModeRaw: String = OpenClawSceneMode.off.rawValue
     @AppStorage("screen.preventSleep") private var preventSleep: Bool = true
     @AppStorage("gateway.preferredStableID") private var preferredGatewayStableID: String = ""
     @AppStorage("gateway.lastDiscoveredStableID") private var lastDiscoveredGatewayStableID: String = ""
@@ -60,7 +61,22 @@ struct SettingsTab: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            self.settingsContent
+        }
+        .gatewayTrustPromptAlert()
+    }
+
+    private var settingsContent: some View {
+        let base = AnyView(self.settingsForm)
+        let withNavigation = self.applySettingsNavigation(to: base)
+        let withAlerts = self.applySettingsAlerts(to: withNavigation)
+        let withOnAppear = self.applySettingsOnAppear(to: withAlerts)
+        let withGatewayHandlers = self.applySettingsGatewayChangeHandlers(to: withOnAppear)
+        return self.applySettingsLocationChangeHandlers(to: withGatewayHandlers)
+    }
+
+    private var settingsForm: some View {
+        Form {
                 Section {
                     DisclosureGroup(isExpanded: self.$gatewayExpanded) {
                         if !self.isGatewayConnected {
@@ -248,103 +264,7 @@ struct SettingsTab: View {
 
                 Section("Device") {
                     DisclosureGroup("Features") {
-                        self.featureToggle(
-                            "Voice Wake",
-                            isOn: self.$voiceWakeEnabled,
-                            help: "Enables wake-word activation to start a hands-free session.") { newValue in
-                                self.appModel.setVoiceWakeEnabled(newValue)
-                            }
-                        self.featureToggle(
-                            "Talk Mode",
-                            isOn: self.$talkEnabled,
-                            help: "Enables voice conversation mode with your connected OpenClaw agent.") { newValue in
-                                self.appModel.setTalkEnabled(newValue)
-                            }
-                        self.featureToggle(
-                            "Background Listening",
-                            isOn: self.$talkBackgroundEnabled,
-                            help: "Keeps listening while the app is backgrounded. Uses more battery.")
-
-                        NavigationLink {
-                            VoiceWakeWordsSettingsView()
-                        } label: {
-                            LabeledContent(
-                                "Wake Words",
-                                value: VoiceWakePreferences.displayString(for: self.voiceWake.triggerWords))
-                        }
-
-                        self.featureToggle(
-                            "Allow Camera",
-                            isOn: self.$cameraEnabled,
-                            help: "Allows the gateway to request photos or short video clips while OpenClaw is foregrounded.")
-
-                        HStack(spacing: 8) {
-                            Text("Location Access")
-                            Spacer()
-                            Button {
-                                self.activeFeatureHelp = FeatureHelp(
-                                    title: "Location Access",
-                                    message: "Controls location permissions for OpenClaw. Off disables location tools, While Using enables foreground location, and Always enables background location.")
-                            } label: {
-                                Image(systemName: "info.circle")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Location Access info")
-                        }
-                        Picker("Location Access", selection: self.$locationEnabledModeRaw) {
-                            Text("Off").tag(OpenClawLocationMode.off.rawValue)
-                            Text("While Using").tag(OpenClawLocationMode.whileUsing.rawValue)
-                            Text("Always").tag(OpenClawLocationMode.always.rawValue)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-
-                        self.featureToggle(
-                            "Prevent Sleep",
-                            isOn: self.$preventSleep,
-                            help: "Keeps the screen awake while OpenClaw is open.")
-
-                        DisclosureGroup("Advanced") {
-                            self.featureToggle(
-                                "Voice Directive Hint",
-                                isOn: self.$talkVoiceDirectiveHintEnabled,
-                                help: "Adds voice-switching instructions to Talk prompts. Disable to reduce prompt size.")
-                            self.featureToggle(
-                                "Show Talk Button",
-                                isOn: self.$talkButtonEnabled,
-                                help: "Shows the floating Talk button in the main interface.")
-                            TextField("Default Share Instruction", text: self.$defaultShareInstruction, axis: .vertical)
-                                .lineLimit(2 ... 6)
-                                .textInputAutocapitalization(.sentences)
-                            HStack(spacing: 8) {
-                                Text("Default Share Instruction")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button {
-                                    self.activeFeatureHelp = FeatureHelp(
-                                        title: "Default Share Instruction",
-                                        message: "Appends this instruction when sharing content into OpenClaw from iOS.")
-                                } label: {
-                                    Image(systemName: "info.circle")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Default Share Instruction info")
-                            }
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Button {
-                                    Task { await self.appModel.runSharePipelineSelfTest() }
-                                } label: {
-                                    Label("Run Share Self-Test", systemImage: "checkmark.seal")
-                                }
-                                Text(self.appModel.lastShareEventText)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        self.featureSettingsContent()
                     }
 
                     DisclosureGroup("Device Info") {
@@ -359,113 +279,141 @@ struct SettingsTab: View {
                         LabeledContent("OpenClaw", value: self.openClawVersionString())
                     }
                 }
-            }
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        self.dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
+        }
+    }
+
+    private func applySettingsNavigation(to content: AnyView) -> AnyView {
+        AnyView(
+            content
+                .navigationTitle("Settings")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            self.dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("Close")
                     }
-                    .accessibilityLabel("Close")
+                })
+    }
+
+    private func applySettingsAlerts(to content: AnyView) -> AnyView {
+        AnyView(
+            content
+                .alert("Reset Onboarding?", isPresented: self.$showResetOnboardingAlert) {
+                    Button("Reset", role: .destructive) {
+                        self.resetOnboarding()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(
+                        "This will disconnect, clear saved gateway connection + credentials, and reopen the onboarding wizard.")
                 }
+                .alert(item: self.$activeFeatureHelp) { help in
+                    Alert(
+                        title: Text(help.title),
+                        message: Text(help.message),
+                        dismissButton: .default(Text("OK")))
+                })
+    }
+
+    private func applySettingsOnAppear(to content: AnyView) -> AnyView {
+        AnyView(content.onAppear {
+            self.lastLocationModeRaw = self.locationEnabledModeRaw
+            self.syncManualPortText()
+            let trimmedInstanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedInstanceId.isEmpty {
+                self.gatewayToken = GatewaySettingsStore.loadGatewayToken(instanceId: trimmedInstanceId) ?? ""
+                self.gatewayPassword = GatewaySettingsStore.loadGatewayPassword(instanceId: trimmedInstanceId) ?? ""
             }
-            .alert("Reset Onboarding?", isPresented: self.$showResetOnboardingAlert) {
-                Button("Reset", role: .destructive) {
-                    self.resetOnboarding()
+            self.defaultShareInstruction = ShareToAgentSettings.loadDefaultInstruction()
+            self.appModel.refreshLastShareEventFromRelay()
+            // Keep setup front-and-center when disconnected; keep things compact once connected.
+            self.gatewayExpanded = !self.isGatewayConnected
+            self.selectedAgentPickerId = self.appModel.selectedAgentId ?? ""
+        })
+    }
+
+    private func applySettingsGatewayChangeHandlers(to content: AnyView) -> AnyView {
+        AnyView(
+            content
+                .onChange(of: self.selectedAgentPickerId) { _, newValue in
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.appModel.setSelectedAgentId(trimmed.isEmpty ? nil : trimmed)
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(
-                    "This will disconnect, clear saved gateway connection + credentials, and reopen the onboarding wizard.")
-            }
-            .alert(item: self.$activeFeatureHelp) { help in
-                Alert(
-                    title: Text(help.title),
-                    message: Text(help.message),
-                    dismissButton: .default(Text("OK")))
-            }
-            .onAppear {
-                self.lastLocationModeRaw = self.locationEnabledModeRaw
-                self.syncManualPortText()
-                let trimmedInstanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmedInstanceId.isEmpty {
-                    self.gatewayToken = GatewaySettingsStore.loadGatewayToken(instanceId: trimmedInstanceId) ?? ""
-                    self.gatewayPassword = GatewaySettingsStore.loadGatewayPassword(instanceId: trimmedInstanceId) ?? ""
+                .onChange(of: self.appModel.selectedAgentId ?? "") { _, newValue in
+                    if newValue != self.selectedAgentPickerId {
+                        self.selectedAgentPickerId = newValue
+                    }
                 }
-                self.defaultShareInstruction = ShareToAgentSettings.loadDefaultInstruction()
-                self.appModel.refreshLastShareEventFromRelay()
-                // Keep setup front-and-center when disconnected; keep things compact once connected.
-                self.gatewayExpanded = !self.isGatewayConnected
-                self.selectedAgentPickerId = self.appModel.selectedAgentId ?? ""
-            }
-            .onChange(of: self.selectedAgentPickerId) { _, newValue in
-                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.appModel.setSelectedAgentId(trimmed.isEmpty ? nil : trimmed)
-            }
-            .onChange(of: self.appModel.selectedAgentId ?? "") { _, newValue in
-                if newValue != self.selectedAgentPickerId {
-                    self.selectedAgentPickerId = newValue
+                .onChange(of: self.preferredGatewayStableID) { _, newValue in
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    GatewaySettingsStore.savePreferredGatewayStableID(trimmed)
                 }
-            }
-            .onChange(of: self.preferredGatewayStableID) { _, newValue in
-                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-                GatewaySettingsStore.savePreferredGatewayStableID(trimmed)
-            }
-            .onChange(of: self.gatewayToken) { _, newValue in
-                guard !self.suppressCredentialPersist else { return }
-                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                let instanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !instanceId.isEmpty else { return }
-                GatewaySettingsStore.saveGatewayToken(trimmed, instanceId: instanceId)
-            }
-            .onChange(of: self.gatewayPassword) { _, newValue in
-                guard !self.suppressCredentialPersist else { return }
-                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                let instanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !instanceId.isEmpty else { return }
-                GatewaySettingsStore.saveGatewayPassword(trimmed, instanceId: instanceId)
-            }
-            .onChange(of: self.defaultShareInstruction) { _, newValue in
-                ShareToAgentSettings.saveDefaultInstruction(newValue)
-            }
-            .onChange(of: self.manualGatewayPort) { _, _ in
-                self.syncManualPortText()
-            }
-            .onChange(of: self.appModel.gatewayServerName) { _, newValue in
-                if newValue != nil {
-                    self.setupCode = ""
-                    self.setupStatusText = nil
-                    return
+                .onChange(of: self.gatewayToken) { _, newValue in
+                    guard !self.suppressCredentialPersist else { return }
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let instanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !instanceId.isEmpty else { return }
+                    GatewaySettingsStore.saveGatewayToken(trimmed, instanceId: instanceId)
                 }
-                if self.manualGatewayEnabled {
-                    self.setupStatusText = self.appModel.gatewayStatusText
+                .onChange(of: self.gatewayPassword) { _, newValue in
+                    guard !self.suppressCredentialPersist else { return }
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let instanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !instanceId.isEmpty else { return }
+                    GatewaySettingsStore.saveGatewayPassword(trimmed, instanceId: instanceId)
                 }
-            }
-            .onChange(of: self.appModel.gatewayStatusText) { _, newValue in
-                guard self.manualGatewayEnabled || self.connectingGatewayID == "manual" else { return }
-                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-                self.setupStatusText = trimmed
-            }
-            .onChange(of: self.locationEnabledModeRaw) { _, newValue in
-                let previous = self.lastLocationModeRaw
-                self.lastLocationModeRaw = newValue
-                guard let mode = OpenClawLocationMode(rawValue: newValue) else { return }
-                Task {
-                    let granted = await self.appModel.requestLocationPermissions(mode: mode)
-                    if !granted {
+                .onChange(of: self.defaultShareInstruction) { _, newValue in
+                    ShareToAgentSettings.saveDefaultInstruction(newValue)
+                }
+                .onChange(of: self.manualGatewayPort) { _, _ in
+                    self.syncManualPortText()
+                }
+                .onChange(of: self.appModel.gatewayServerName) { _, newValue in
+                    if newValue != nil {
+                        self.setupCode = ""
+                        self.setupStatusText = nil
+                        return
+                    }
+                    if self.manualGatewayEnabled {
+                        self.setupStatusText = self.appModel.gatewayStatusText
+                    }
+                }
+                .onChange(of: self.appModel.gatewayStatusText) { _, newValue in
+                    guard self.manualGatewayEnabled || self.connectingGatewayID == "manual" else { return }
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    self.setupStatusText = trimmed
+                })
+    }
+
+    private func applySettingsLocationChangeHandlers(to content: AnyView) -> AnyView {
+        AnyView(
+            content
+                .onChange(of: self.locationEnabledModeRaw) { _, newValue in
+                    let previous = self.lastLocationModeRaw
+                    self.lastLocationModeRaw = newValue
+                    guard let mode = OpenClawLocationMode(rawValue: newValue) else { return }
+                    Task {
+                        let granted = await self.appModel.requestLocationPermissions(mode: mode)
+                        if !granted {
+                            await MainActor.run {
+                                self.locationEnabledModeRaw = previous
+                                self.lastLocationModeRaw = previous
+                            }
+                            return
+                        }
                         await MainActor.run {
-                            self.locationEnabledModeRaw = previous
-                            self.lastLocationModeRaw = previous
+                            self.appModel.refreshSceneModeOnSettingsChange(forceLocationFetch: true)
                         }
                     }
                 }
-            }
-        }
-        .gatewayTrustPromptAlert()
+                .onChange(of: self.locationSceneModeRaw) { _, _ in
+                    self.appModel.refreshSceneModeOnSettingsChange(forceLocationFetch: true)
+                })
     }
 
     @ViewBuilder
@@ -602,6 +550,140 @@ struct SettingsTab: View {
         }
         .onChange(of: isOn.wrappedValue) { _, newValue in
             onChange?(newValue)
+        }
+    }
+
+    @ViewBuilder
+    private func featureSettingsContent() -> some View {
+        self.featureToggle(
+            "Voice Wake",
+            isOn: self.$voiceWakeEnabled,
+            help: "Enables wake-word activation to start a hands-free session.") { newValue in
+                self.appModel.setVoiceWakeEnabled(newValue)
+            }
+        self.featureToggle(
+            "Talk Mode",
+            isOn: self.$talkEnabled,
+            help: "Enables voice conversation mode with your connected OpenClaw agent.") { newValue in
+                self.appModel.setTalkEnabled(newValue)
+            }
+        self.featureToggle(
+            "Background Listening",
+            isOn: self.$talkBackgroundEnabled,
+            help: "Keeps listening while the app is backgrounded. Uses more battery.")
+
+        NavigationLink {
+            VoiceWakeWordsSettingsView()
+        } label: {
+            LabeledContent(
+                "Wake Words",
+                value: VoiceWakePreferences.displayString(for: self.voiceWake.triggerWords))
+        }
+
+        self.featureToggle(
+            "Allow Camera",
+            isOn: self.$cameraEnabled,
+            help: "Allows the gateway to request photos or short video clips while OpenClaw is foregrounded.")
+
+        HStack(spacing: 8) {
+            Text("Location Access")
+            Spacer()
+            Button {
+                self.activeFeatureHelp = FeatureHelp(
+                    title: "Location Access",
+                    message: "Controls location permissions for OpenClaw. Off disables location tools, While Using enables foreground location, and Always enables background location.")
+            } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Location Access info")
+        }
+        Picker("Location Access", selection: self.$locationEnabledModeRaw) {
+            Text("Off").tag(OpenClawLocationMode.off.rawValue)
+            Text("While Using").tag(OpenClawLocationMode.whileUsing.rawValue)
+            Text("Always").tag(OpenClawLocationMode.always.rawValue)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+
+        self.sceneModeControls()
+
+        NavigationLink {
+            SocialSettingsView()
+        } label: {
+            Label("Social (Phase 2)", systemImage: "person.2.circle")
+        }
+
+        self.featureToggle(
+            "Prevent Sleep",
+            isOn: self.$preventSleep,
+            help: "Keeps the screen awake while OpenClaw is open.")
+
+        DisclosureGroup("Advanced") {
+            self.featureToggle(
+                "Voice Directive Hint",
+                isOn: self.$talkVoiceDirectiveHintEnabled,
+                help: "Adds voice-switching instructions to Talk prompts. Disable to reduce prompt size.")
+            self.featureToggle(
+                "Show Talk Button",
+                isOn: self.$talkButtonEnabled,
+                help: "Shows the floating Talk button in the main interface.")
+            TextField("Default Share Instruction", text: self.$defaultShareInstruction, axis: .vertical)
+                .lineLimit(2 ... 6)
+                .textInputAutocapitalization(.sentences)
+            HStack(spacing: 8) {
+                Text("Default Share Instruction")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    self.activeFeatureHelp = FeatureHelp(
+                        title: "Default Share Instruction",
+                        message: "Appends this instruction when sharing content into OpenClaw from iOS.")
+                } label: {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Default Share Instruction info")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    Task { await self.appModel.runSharePipelineSelfTest() }
+                } label: {
+                    Label("Run Share Self-Test", systemImage: "checkmark.seal")
+                }
+                Text(self.appModel.lastShareEventText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sceneModeControls() -> some View {
+        HStack(spacing: 8) {
+            Text("Scene Mode")
+            Spacer()
+            Button {
+                self.activeFeatureHelp = FeatureHelp(
+                    title: "Scene Mode",
+                    message: "Uses location context to set a runtime scene profile. Auto switches between Focus and Commute using motion speed.")
+            } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Scene Mode info")
+        }
+
+        Picker("Scene Mode", selection: self.$locationSceneModeRaw) {
+            Text(OpenClawSceneMode.off.title).tag(OpenClawSceneMode.off.rawValue)
+            Text(OpenClawSceneMode.auto.title).tag(OpenClawSceneMode.auto.rawValue)
+            Text(OpenClawSceneMode.focus.title).tag(OpenClawSceneMode.focus.rawValue)
+            Text(OpenClawSceneMode.commute.title).tag(OpenClawSceneMode.commute.rawValue)
         }
     }
 

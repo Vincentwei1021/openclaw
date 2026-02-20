@@ -37,6 +37,8 @@ targets:
     dependencies:
       - target: OpenClawShareExtension
         embed: true
+      - target: OpenClawWidgetExtension
+        embed: true
       - target: OpenClawWatchApp
       - package: OpenClawKit
       - package: OpenClawKit
@@ -105,11 +107,14 @@ targets:
           NSAllowsArbitraryLoadsInWebContent: true
         NSBonjourServices:
           - _openclaw-gw._tcp
+          - _openclaw-peer._tcp
         NSCameraUsageDescription: OpenClaw can capture photos or short video clips when requested via the gateway.
         NSLocationWhenInUseUsageDescription: OpenClaw uses your location when you allow location sharing.
         NSLocationAlwaysAndWhenInUseUsageDescription: OpenClaw can share your location in the background when you enable Always.
         NSMicrophoneUsageDescription: OpenClaw needs microphone access for voice wake.
         NSSpeechRecognitionUsageDescription: OpenClaw uses on-device speech recognition for voice wake.
+        NFCReaderUsageDescription: OpenClaw can scan NFC agent cards for nearby peer exchange.
+        NSSupportsLiveActivities: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
@@ -155,6 +160,37 @@ targets:
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
               NSExtensionActivationSupportsImageWithMaxCount: 10
               NSExtensionActivationSupportsMovieWithMaxCount: 1
+
+  OpenClawWidgetExtension:
+    type: app-extension
+    platform: iOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: WidgetExtension
+      - path: Sources/Widgets/LiveActivity
+    dependencies:
+      - package: OpenClawKit
+      - sdk: WidgetKit.framework
+      - sdk: ActivityKit.framework
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: "$(OPENCLAW_CODE_SIGN_STYLE)"
+        DEVELOPMENT_TEAM: "$(OPENCLAW_DEVELOPMENT_TEAM)"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(OPENCLAW_WIDGET_BUNDLE_ID)"
+        PROVISIONING_PROFILE_SPECIFIER: "$(OPENCLAW_WIDGET_PROFILE)"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+    info:
+      path: WidgetExtension/Info.plist
+      properties:
+        CFBundleDisplayName: OpenClaw Widgets
+        CFBundleShortVersionString: "2026.2.18"
+        CFBundleVersion: "20260218"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
   OpenClawWatchApp:
     type: application.watchapp2

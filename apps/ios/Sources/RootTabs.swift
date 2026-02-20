@@ -70,6 +70,7 @@ struct RootTabs: View {
             self.toastDismissTask?.cancel()
             self.toastDismissTask = nil
         }
+        .task(id: self.widgetPublishSignature) { self.publishWidgetStatus() }
         .confirmationDialog(
             "Gateway",
             isPresented: self.$showGatewayActions,
@@ -110,5 +111,15 @@ struct RootTabs: View {
             voiceWakeEnabled: self.voiceWakeEnabled,
             cameraHUDText: self.appModel.cameraHUDText,
             cameraHUDKind: self.appModel.cameraHUDKind)
+    }
+
+    private func publishWidgetStatus() {
+        WidgetStatusPublisher.publish(
+            gatewayTitle: self.gatewayStatus.title,
+            activityTitle: self.statusActivity?.title)
+    }
+
+    private var widgetPublishSignature: String {
+        "\(self.gatewayStatus.title)|\(self.statusActivity?.title ?? "")|\(self.voiceWakeEnabled)"
     }
 }

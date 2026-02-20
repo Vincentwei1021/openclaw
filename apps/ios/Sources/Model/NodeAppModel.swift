@@ -1,6 +1,7 @@
 import OpenClawChatUI
 import OpenClawKit
 import OpenClawProtocol
+import CoreLocation
 import Observation
 import os
 import SwiftUI
@@ -103,6 +104,12 @@ final class NodeAppModel {
     private var backgroundTalkKeptActive = false
     private var backgroundedAt: Date?
     private var reconnectAfterBackgroundArmed = false
+    @ObservationIgnored private var sceneModeRefreshTask: Task<Void, Never>?
+    var sceneModeState = OpenClawSceneState(
+        mode: .off,
+        profile: nil,
+        reason: "scene disabled",
+        updatedAt: .distantPast)
 
     private var gatewayConnected = false
     private var operatorConnected = false
@@ -167,6 +174,10 @@ final class NodeAppModel {
         let talkEnabled = UserDefaults.standard.bool(forKey: "talk.enabled")
         // Route through the coordinator so VoiceWake and Talk don't fight over the microphone.
         self.setTalkEnabled(talkEnabled)
+        self.configureSceneModeRefresh()
+        Task { [weak self] in
+            await self?.refreshSceneMode(reason: "startup", forceLocationFetch: false)
+        }
 
         // Wire up deep links from canvas taps
         self.screen.onDeepLink = { [weak self] url in
@@ -276,6 +287,7 @@ final class NodeAppModel {
             let shouldKeepTalkActive = keepTalkActive && self.talkMode.isEnabled
             self.backgroundTalkKeptActive = shouldKeepTalkActive
             self.backgroundTalkSuspended = self.talkMode.suspendForBackground(keepActive: shouldKeepTalkActive)
+            self.configureSceneModeRefresh()
         case .active, .inactive:
             self.isBackgrounded = false
             if self.operatorConnected {
@@ -327,8 +339,15 @@ final class NodeAppModel {
                     }
                 }
             }
+            self.configureSceneModeRefresh()
+            if phase == .active {
+                Task { [weak self] in
+                    await self?.refreshSceneMode(reason: "app became active", forceLocationFetch: true)
+                }
+            }
         @unknown default:
             self.isBackgrounded = false
+            self.configureSceneModeRefresh()
         }
     }
 
@@ -367,15 +386,31 @@ final class NodeAppModel {
     }
 
     func requestLocationPermissions(mode: OpenClawLocationMode) async -> Bool {
-        guard mode != .off else { return true }
+        guard mode != .off else {
+            self.configureSceneModeRefresh()
+            await self.refreshSceneMode(reason: "location mode disabled", forceLocationFetch: false)
+            return true
+        }
         let status = await self.locationService.ensureAuthorization(mode: mode)
+        let granted: Bool
         switch status {
         case .authorizedAlways:
-            return true
+            granted = true
         case .authorizedWhenInUse:
-            return mode != .always
+            granted = mode != .always
         default:
-            return false
+            granted = false
+        }
+        self.configureSceneModeRefresh()
+        await self.refreshSceneMode(reason: "location permission changed", forceLocationFetch: granted)
+        return granted
+    }
+
+    func refreshSceneModeOnSettingsChange(forceLocationFetch: Bool = true) {
+        self.updateSignificantLocationMonitoringForCurrentSettings()
+        self.configureSceneModeRefresh()
+        Task { [weak self] in
+            await self?.refreshSceneMode(reason: "settings updated", forceLocationFetch: forceLocationFetch)
         }
     }
 
@@ -394,6 +429,8 @@ final class NodeAppModel {
 
     private static let defaultSeamColor = Color(red: 79 / 255.0, green: 122 / 255.0, blue: 154 / 255.0)
     private static let apnsDeviceTokenUserDefaultsKey = "push.apns.deviceTokenHex"
+    private static let sceneModeDefaultsKey = "location.sceneMode"
+    private static let sceneModePollIntervalSeconds: TimeInterval = 90
     private static var apnsEnvironment: String {
 #if DEBUG
         "sandbox"
@@ -1535,6 +1572,11 @@ private extension NodeAppModel {
         }
     }
 
+    func sceneMode() -> OpenClawSceneMode {
+        let raw = UserDefaults.standard.string(forKey: Self.sceneModeDefaultsKey) ?? OpenClawSceneMode.off.rawValue
+        return OpenClawSceneMode(rawValue: raw) ?? .off
+    }
+
     func locationMode() -> OpenClawLocationMode {
         let raw = UserDefaults.standard.string(forKey: "location.enabledMode") ?? "off"
         return OpenClawLocationMode(rawValue: raw) ?? .off
@@ -1544,6 +1586,152 @@ private extension NodeAppModel {
         // iOS settings now expose a single location mode control.
         // Default location tool precision stays high unless a command explicitly requests balanced.
         true
+    }
+
+    func configureSceneModeRefresh() {
+        guard self.shouldPollSceneMode() else {
+            self.sceneModeRefreshTask?.cancel()
+            self.sceneModeRefreshTask = nil
+            return
+        }
+        guard self.sceneModeRefreshTask == nil else { return }
+
+        self.sceneModeRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                await self.refreshSceneMode(reason: "auto polling", forceLocationFetch: true)
+                let delayNs = UInt64(Self.sceneModePollIntervalSeconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: delayNs)
+            }
+        }
+    }
+
+    func refreshSceneMode(reason: String, forceLocationFetch: Bool) async {
+        let mode = self.sceneMode()
+        let locationMode = self.locationMode()
+        let auth = self.locationService.authorizationStatus()
+        let now = Date()
+
+        if mode == .off {
+            await self.applySceneModeState(
+                OpenClawSceneState(mode: .off, profile: nil, reason: reason, updatedAt: now),
+                sample: nil)
+            return
+        }
+
+        if locationMode == .off {
+            await self.applySceneModeState(
+                OpenClawSceneState(mode: mode, profile: nil, reason: "location disabled", updatedAt: now),
+                sample: nil)
+            return
+        }
+
+        if auth != .authorizedAlways, auth != .authorizedWhenInUse {
+            await self.applySceneModeState(
+                OpenClawSceneState(mode: mode, profile: nil, reason: "location permission required", updatedAt: now),
+                sample: nil)
+            return
+        }
+
+        if self.isBackgrounded, auth != .authorizedAlways {
+            await self.applySceneModeState(
+                OpenClawSceneState(
+                    mode: mode,
+                    profile: self.sceneModeState.profile,
+                    reason: "background requires Always permission",
+                    updatedAt: now),
+                sample: nil)
+            return
+        }
+
+        var sample: CLLocation?
+        if mode == .auto, forceLocationFetch || self.sceneModeState.profile == nil {
+            let params = OpenClawLocationGetParams(timeoutMs: 3500, maxAgeMs: 120000, desiredAccuracy: .balanced)
+            sample = try? await self.locationService.currentLocation(
+                params: params,
+                desiredAccuracy: .balanced,
+                maxAgeMs: params.maxAgeMs,
+                timeoutMs: params.timeoutMs)
+        }
+
+        let profile = OpenClawSceneClassifier.profile(
+            mode: mode,
+            location: sample,
+            now: now,
+            previous: self.sceneModeState.profile)
+        let resolvedReason = OpenClawSceneClassifier.reason(
+            mode: mode,
+            location: sample,
+            now: now,
+            previous: self.sceneModeState.profile)
+        await self.applySceneModeState(
+            OpenClawSceneState(
+                mode: mode,
+                profile: profile,
+                reason: "\(reason): \(resolvedReason)",
+                updatedAt: now),
+            sample: sample)
+    }
+
+    func shouldPollSceneMode() -> Bool {
+        if self.sceneMode() != .auto { return false }
+        if self.locationMode() == .off { return false }
+        if self.isBackgrounded { return false }
+        let auth = self.locationService.authorizationStatus()
+        return auth == .authorizedAlways || auth == .authorizedWhenInUse
+    }
+
+    func updateSignificantLocationMonitoringForCurrentSettings() {
+        guard self.gatewayConnected else {
+            self.locationService.stopMonitoringSignificantLocationChanges()
+            return
+        }
+        guard self.locationMode() == .always else {
+            self.locationService.stopMonitoringSignificantLocationChanges()
+            return
+        }
+        guard self.locationService.authorizationStatus() == .authorizedAlways else {
+            self.locationService.stopMonitoringSignificantLocationChanges()
+            return
+        }
+        SignificantLocationMonitor.startIfNeeded(
+            locationService: self.locationService,
+            locationMode: self.locationMode(),
+            gateway: self.nodeGateway)
+    }
+
+    func applySceneModeState(_ next: OpenClawSceneState, sample: CLLocation?) async {
+        let previous = self.sceneModeState
+        self.sceneModeState = next
+
+        guard previous.mode != next.mode || previous.profile != next.profile else { return }
+        await self.sendSceneModeChangedEvent(next, sample: sample)
+    }
+
+    func sendSceneModeChangedEvent(_ state: OpenClawSceneState, sample: CLLocation?) async {
+        guard await self.isGatewayConnected() else { return }
+
+        struct Payload: Codable {
+            var mode: String
+            var profile: String?
+            var reason: String
+            var speedMps: Double?
+            var accuracyMeters: Double?
+            var timestamp: String
+        }
+
+        let payload = Payload(
+            mode: state.mode.rawValue,
+            profile: state.profile?.rawValue,
+            reason: state.reason,
+            speedMps: sample.flatMap { $0.speed >= 0 ? $0.speed : nil },
+            accuracyMeters: sample.flatMap { $0.horizontalAccuracy >= 0 ? $0.horizontalAccuracy : nil },
+            timestamp: ISO8601DateFormatter().string(from: state.updatedAt))
+        guard let data = try? JSONEncoder().encode(payload),
+              let json = String(data: data, encoding: .utf8)
+        else { return }
+
+        await self.nodeGateway.sendEvent(event: "scene.mode.changed", payloadJSON: json)
     }
 
     static func decodeParams<T: Decodable>(_ type: T.Type, from json: String?) throws -> T {
@@ -1669,6 +1857,8 @@ extension NodeAppModel {
         self.gatewayAutoReconnectEnabled = false
         self.gatewayPairingPaused = false
         self.gatewayPairingRequestId = nil
+        self.sceneModeRefreshTask?.cancel()
+        self.sceneModeRefreshTask = nil
         self.nodeGatewayTask?.cancel()
         self.nodeGatewayTask = nil
         self.operatorGatewayTask?.cancel()
@@ -1676,6 +1866,7 @@ extension NodeAppModel {
         self.voiceWakeSyncTask?.cancel()
         self.voiceWakeSyncTask = nil
         self.gatewayHealthMonitor.stop()
+        self.locationService.stopMonitoringSignificantLocationChanges()
         Task {
             await self.operatorGateway.disconnect()
             await self.nodeGateway.disconnect()
@@ -1875,7 +2066,9 @@ private extension NodeAppModel {
                             }
                             await self.showA2UIOnConnectIfNeeded()
                             await self.onNodeGatewayConnected()
-                            await MainActor.run { SignificantLocationMonitor.startIfNeeded(locationService: self.locationService, locationMode: self.locationMode(), gateway: self.nodeGateway) }
+                            await MainActor.run { self.updateSignificantLocationMonitoringForCurrentSettings() }
+                            await MainActor.run { self.configureSceneModeRefresh() }
+                            await self.refreshSceneMode(reason: "gateway connected", forceLocationFetch: true)
                         },
                         onDisconnected: { [weak self] reason in
                             guard let self else { return }
@@ -1885,6 +2078,7 @@ private extension NodeAppModel {
                                 self.gatewayRemoteAddress = nil
                                 self.gatewayConnected = false
                                 self.showLocalCanvasOnDisconnect()
+                                self.locationService.stopMonitoringSignificantLocationChanges()
                             }
                             GatewayDiagnostics.log("gateway disconnected reason: \(reason)")
                         },
@@ -1988,6 +2182,7 @@ private extension NodeAppModel {
                 self.connectedGatewayID = nil
                 self.gatewayConnected = false
                 self.operatorConnected = false
+                self.locationService.stopMonitoringSignificantLocationChanges()
                 self.talkMode.updateGatewayConnected(false)
                 self.seamColorHex = nil
                 self.mainSessionBaseKey = "main"

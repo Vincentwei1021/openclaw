@@ -48,11 +48,22 @@ struct StatusPill: View {
         Button(action: self.onTap) {
             HStack(spacing: 10) {
                 HStack(spacing: 8) {
-                    Circle()
-                        .fill(self.gateway.color)
-                        .frame(width: 9, height: 9)
-                        .scaleEffect(self.gateway == .connecting && !self.reduceMotion ? (self.pulse ? 1.15 : 0.85) : 1.0)
-                        .opacity(self.gateway == .connecting && !self.reduceMotion ? (self.pulse ? 1.0 : 0.6) : 1.0)
+                    ZStack(alignment: .bottomTrailing) {
+                        AgentAvatarView(expression: self.avatarExpression, size: 18)
+
+                        Circle()
+                            .fill(self.gateway.color)
+                            .frame(width: 6, height: 6)
+                            .overlay {
+                                Circle().stroke(.black.opacity(0.2), lineWidth: 0.5)
+                            }
+                            .scaleEffect(
+                                self.gateway == .connecting && !self.reduceMotion ? (self.pulse ? 1.18 : 0.85) : 1.0)
+                            .opacity(
+                                self.gateway == .connecting && !self.reduceMotion
+                                    ? (self.pulse ? 1.0 : 0.65) : 1.0
+                            )
+                    }
 
                     Text(self.gateway.title)
                         .font(.subheadline.weight(.semibold))
@@ -113,13 +124,22 @@ struct StatusPill: View {
             self.updatePulse(for: self.gateway, scenePhase: self.scenePhase, reduceMotion: newValue)
         }
         .animation(.easeInOut(duration: 0.18), value: self.activity?.title)
+        .animation(.easeInOut(duration: 0.18), value: self.avatarExpression)
     }
 
     private var accessibilityValue: String {
         if let activity {
-            return "\(self.gateway.title), \(activity.title)"
+            return "\(self.gateway.title), \(self.avatarExpression.accessibilityLabel), \(activity.title)"
         }
-        return "\(self.gateway.title), Voice Wake \(self.voiceWakeEnabled ? "enabled" : "disabled")"
+        let voiceState = self.voiceWakeEnabled ? "enabled" : "disabled"
+        return "\(self.gateway.title), \(self.avatarExpression.accessibilityLabel), Voice Wake \(voiceState)"
+    }
+
+    private var avatarExpression: AgentAvatarExpression {
+        AgentAvatarExpression.resolve(
+            gateway: self.gateway,
+            voiceWakeEnabled: self.voiceWakeEnabled,
+            activity: self.activity)
     }
 
     private func updatePulse(for gateway: GatewayState, scenePhase: ScenePhase, reduceMotion: Bool) {

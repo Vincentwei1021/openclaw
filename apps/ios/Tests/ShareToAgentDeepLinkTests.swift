@@ -36,9 +36,16 @@ import Testing
         #expect(agent.message.contains("https://example.com"))
     }
 
-    @Test func buildURLReturnsNilWhenPayloadEmpty() {
+    @Test func buildURLUsesFallbackInstructionWhenPayloadEmpty() {
         let payload = SharedContentPayload(title: nil, url: nil, text: nil)
-        #expect(ShareToAgentDeepLink.buildURL(from: payload) == nil)
+        let url = ShareToAgentDeepLink.buildURL(from: payload)
+        let parsed = url.flatMap { DeepLinkParser.parse($0) }
+        guard case let .agent(agent)? = parsed else {
+            Issue.record("Expected openclaw://agent deep link")
+            return
+        }
+        #expect(agent.message.contains("Shared from iOS."))
+        #expect(agent.message.contains("Please help me with this."))
     }
 
     @Test func shareInstructionSettingsRoundTrip() {

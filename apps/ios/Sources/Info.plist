@@ -41,6 +41,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_openclaw-gw._tcp</string>
+		<string>_openclaw-peer._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>OpenClaw can capture photos or short video clips when requested via the gateway.</string>
@@ -54,6 +55,10 @@
 	<string>OpenClaw needs microphone access for voice wake.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>OpenClaw uses on-device speech recognition for voice wake.</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>OpenClaw can scan NFC agent cards for nearby peer exchange.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

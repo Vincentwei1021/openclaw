@@ -81,6 +81,8 @@ extension AVAudioPCMBuffer {
 @MainActor
 @Observable
 final class VoiceWakeManager: NSObject {
+    static let duplicateCommandCooldownSeconds: TimeInterval = 1.5
+
     var isEnabled: Bool = false
     var isListening: Bool = false
     var statusText: String = "Off"
@@ -95,9 +97,12 @@ final class VoiceWakeManager: NSObject {
     private var tapDrainTask: Task<Void, Never>?
 
     private var lastDispatched: String?
+    private var lastDispatchedAt: Date?
     private var onCommand: (@Sendable (String) async -> Void)?
     private var userDefaultsObserver: NSObjectProtocol?
     private var suppressedByTalk: Bool = false
+    private var consecutiveRecognitionErrors: Int = 0
+    private var restartTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -207,6 +212,9 @@ final class VoiceWakeManager: NSObject {
             try Self.configureAudioSession()
             try self.startRecognition()
             self.isListening = true
+            self.consecutiveRecognitionErrors = 0
+            self.restartTask?.cancel()
+            self.restartTask = nil
             self.statusText = "Listening"
         } catch {
             self.isListening = false
@@ -218,6 +226,8 @@ final class VoiceWakeManager: NSObject {
         self.isEnabled = false
         self.isListening = false
         self.statusText = "Off"
+        self.restartTask?.cancel()
+        self.restartTask = nil
 
         self.tapDrainTask?.cancel()
         self.tapDrainTask = nil
@@ -243,6 +253,8 @@ final class VoiceWakeManager: NSObject {
 
         self.isListening = false
         self.statusText = "Paused"
+        self.restartTask?.cancel()
+        self.restartTask = nil
 
         self.tapDrainTask?.cancel()
         self.tapDrainTask = nil
@@ -333,10 +345,9 @@ final class VoiceWakeManager: NSObject {
 
             let shouldRestart = self.isEnabled
             if shouldRestart {
-                Task {
-                    try? await Task.sleep(nanoseconds: 700_000_000)
-                    await self.start()
-                }
+                self.consecutiveRecognitionErrors += 1
+                let delay = Self.restartDelaySeconds(forErrorCount: self.consecutiveRecognitionErrors)
+                self.scheduleRestart(afterSeconds: delay)
             }
             return
         }
@@ -344,8 +355,15 @@ final class VoiceWakeManager: NSObject {
         guard let transcript else { return }
         guard let cmd = self.extractCommand(from: transcript, segments: segments) else { return }
 
-        if cmd == self.lastDispatched { return }
+        if cmd == self.lastDispatched,
+           let lastDispatchedAt = self.lastDispatchedAt,
+           Date().timeIntervalSince(lastDispatchedAt) < Self.duplicateCommandCooldownSeconds
+        {
+            return
+        }
+
         self.lastDispatched = cmd
+        self.lastDispatchedAt = Date()
         self.lastTriggeredCommand = cmd
         self.statusText = "Triggered"
 
@@ -361,6 +379,23 @@ final class VoiceWakeManager: NSObject {
         if shouldRestart {
             await self.start()
         }
+    }
+
+    private func scheduleRestart(afterSeconds delay: TimeInterval) {
+        self.restartTask?.cancel()
+        self.restartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            await self.startIfEnabled()
+            self.restartTask = nil
+        }
+    }
+
+    nonisolated static func restartDelaySeconds(forErrorCount errorCount: Int) -> TimeInterval {
+        let clampedCount = max(errorCount, 1)
+        let attempt = clampedCount - 1
+        let delay = 0.7 * pow(1.8, Double(attempt))
+        return min(delay, 5.0)
     }
 
     private func extractCommand(from transcript: String, segments: [WakeWordSegment]) -> String? {

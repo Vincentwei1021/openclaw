@@ -24,6 +24,11 @@ import UIKit
         _ = Self.host(root)
     }
 
+    @Test @MainActor func agentAvatarBuildsAViewHierarchy() {
+        let root = AgentAvatarView(expression: .ready)
+        _ = Self.host(root)
+    }
+
     @Test @MainActor func settingsTabBuildsAViewHierarchy() {
         let appModel = NodeAppModel()
         let gatewayController = GatewayConnectionController(appModel: appModel, startDiscovery: false)
@@ -76,6 +81,11 @@ import UIKit
 
     @Test @MainActor func voiceWakeToastBuildsAViewHierarchy() {
         let root = VoiceWakeToast(command: "openclaw: do something")
+        _ = Self.host(root)
+    }
+
+    @Test @MainActor func socialSettingsViewBuildsAViewHierarchy() {
+        let root = NavigationStack { SocialSettingsView() }
         _ = Self.host(root)
     }
 }
