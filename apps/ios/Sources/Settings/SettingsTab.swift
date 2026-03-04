@@ -5,6 +5,7 @@ import os
 import SwiftUI
 import UIKit
 
+// swiftlint:disable type_body_length
 struct SettingsTab: View {
     private struct FeatureHelp: Identifiable {
         let id = UUID()
@@ -22,7 +23,6 @@ struct SettingsTab: View {
     @AppStorage("talk.enabled") private var talkEnabled: Bool = false
     @AppStorage("talk.button.enabled") private var talkButtonEnabled: Bool = true
     @AppStorage("talk.background.enabled") private var talkBackgroundEnabled: Bool = false
-    @AppStorage("talk.voiceDirectiveHint.enabled") private var talkVoiceDirectiveHintEnabled: Bool = true
     @AppStorage("camera.enabled") private var cameraEnabled: Bool = true
     @AppStorage("location.enabledMode") private var locationEnabledModeRaw: String = OpenClawLocationMode.off.rawValue
     @AppStorage("location.sceneMode") private var locationSceneModeRaw: String = OpenClawSceneMode.off.rawValue
@@ -245,7 +245,10 @@ struct SettingsTab: View {
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(10)
-                                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .background(
+                                        .thinMaterial,
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    )
                             }
                         }
                     } label: {
@@ -274,9 +277,9 @@ struct SettingsTab: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        LabeledContent("Device", value: self.deviceFamily())
-                        LabeledContent("Platform", value: self.platformString())
-                        LabeledContent("OpenClaw", value: self.openClawVersionString())
+                        LabeledContent("Device", value: DeviceInfoHelper.deviceFamily())
+                        LabeledContent("Platform", value: DeviceInfoHelper.platformStringForDisplay())
+                        LabeledContent("OpenClaw", value: DeviceInfoHelper.openClawVersionString())
                     }
                 }
         }
@@ -332,6 +335,9 @@ struct SettingsTab: View {
             // Keep setup front-and-center when disconnected; keep things compact once connected.
             self.gatewayExpanded = !self.isGatewayConnected
             self.selectedAgentPickerId = self.appModel.selectedAgentId ?? ""
+            if self.isGatewayConnected {
+                self.appModel.reloadTalkConfig()
+            }
         })
     }
 
@@ -409,6 +415,10 @@ struct SettingsTab: View {
                         await MainActor.run {
                             self.appModel.refreshSceneModeOnSettingsChange(forceLocationFetch: true)
                         }
+                        return
+                    }
+                    await MainActor.run {
+                        self.gatewayController.refreshActiveGatewayRegistrationFromSettings()
                     }
                 }
                 .onChange(of: self.locationSceneModeRaw) { _, _ in
@@ -503,32 +513,6 @@ struct SettingsTab: View {
         }
         let trimmed = self.appModel.gatewayStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Not connected" : trimmed
-    }
-
-    private func platformString() -> String {
-        let v = ProcessInfo.processInfo.operatingSystemVersion
-        return "iOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
-    }
-
-    private func deviceFamily() -> String {
-        switch UIDevice.current.userInterfaceIdiom {
-        case .pad:
-            "iPad"
-        case .phone:
-            "iPhone"
-        default:
-            "iOS"
-        }
-    }
-
-    private func openClawVersionString() -> String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
-        let trimmedBuild = build.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedBuild.isEmpty || trimmedBuild == version {
-            return version
-        }
-        return "\(version) (\(trimmedBuild))"
     }
 
     private func featureToggle(
@@ -787,7 +771,9 @@ struct SettingsTab: View {
         let hasToken = !self.gatewayToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasPassword = !self.gatewayPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         GatewayDiagnostics.log(
-            "setup code applied host=\(host) port=\(resolvedPort ?? -1) tls=\(self.manualGatewayTLS) token=\(hasToken) password=\(hasPassword)")
+            "setup code applied host=\(host) port=\(resolvedPort ?? -1) "
+                + "tls=\(self.manualGatewayTLS) token=\(hasToken) password=\(hasPassword)"
+        )
         guard let port = resolvedPort else {
             self.setupStatusText = "Failed: invalid port"
             return
@@ -1095,3 +1081,4 @@ struct SettingsTab: View {
         return lines
     }
 }
+// swiftlint:enable type_body_length

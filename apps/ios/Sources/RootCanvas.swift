@@ -88,6 +88,7 @@ struct RootCanvas: View {
             }
         }
         .gatewayTrustPromptAlert()
+        .deepLinkAgentPromptAlert()
         .sheet(item: self.$presentedSheet) { sheet in
             switch sheet {
             case .settings:
@@ -99,7 +100,7 @@ struct RootCanvas: View {
                 ChatSheet(
                     // Chat RPCs run on the operator session (read/write scopes).
                     gateway: self.appModel.operatorSession,
-                    sessionKey: self.appModel.mainSessionKey,
+                    sessionKey: self.appModel.chatSessionKey,
                     agentName: self.appModel.activeAgentName,
                     userAccent: self.appModel.seamColor)
             case .quickSetup:
@@ -177,20 +178,7 @@ struct RootCanvas: View {
     }
 
     private var gatewayStatus: StatusPill.GatewayState {
-        if self.appModel.gatewayServerName != nil { return .connected }
-
-        let text = self.appModel.gatewayStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.localizedCaseInsensitiveContains("connecting") ||
-            text.localizedCaseInsensitiveContains("reconnecting")
-        {
-            return .connecting
-        }
-
-        if text.localizedCaseInsensitiveContains("error") {
-            return .error
-        }
-
-        return .disconnected
+        GatewayStatusBuilder.build(appModel: self.appModel)
     }
 
     private func updateIdleTimer() {
@@ -361,21 +349,10 @@ private struct CanvasContent: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .confirmationDialog(
-            "Gateway",
+        .gatewayActionsDialog(
             isPresented: self.$showGatewayActions,
-            titleVisibility: .visible)
-        {
-            Button("Disconnect", role: .destructive) {
-                self.appModel.disconnectGateway()
-            }
-            Button("Open Settings") {
-                self.openSettings()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Disconnect from the gateway?")
-        }
+            onDisconnect: { self.appModel.disconnectGateway() },
+            onOpenSettings: { self.openSettings() })
     }
 
     private var statusActivity: StatusPill.Activity? {
