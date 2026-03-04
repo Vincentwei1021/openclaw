@@ -412,11 +412,13 @@ enum GatewayDiagnostics {
     private static let keepLogBytes: Int64 = 256 * 1024
     private static let logSizeCheckEveryWrites = 50
     private static let logWritesSinceCheck = OSAllocatedUnfairLock(initialState: 0)
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
+    private static func timestampString(_ date: Date = Date()) -> String {
+        // ISO8601DateFormatter is not Sendable under Swift 6 strict concurrency.
+        // Build a short-lived formatter per call to keep this static API concurrency-safe.
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
 
     private static var fileURL: URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
@@ -476,7 +478,7 @@ enum GatewayDiagnostics {
         guard let url = fileURL else { return }
         queue.async {
             self.truncateLogIfNeeded(url: url)
-            let timestamp = self.isoFormatter.string(from: Date())
+            let timestamp = self.timestampString()
             let line = "[\(timestamp)] gateway diagnostics started\n"
             if let data = line.data(using: .utf8) {
                 self.appendToLog(url: url, data: data)
@@ -486,7 +488,7 @@ enum GatewayDiagnostics {
     }
 
     static func log(_ message: String) {
-        let timestamp = self.isoFormatter.string(from: Date())
+        let timestamp = self.timestampString()
         let line = "[\(timestamp)] \(message)"
         logger.info("\(line, privacy: .public)")
 

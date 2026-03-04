@@ -22,8 +22,16 @@ import Testing
 
         await voiceWake.start()
 
-        #expect(voiceWake.isListening == false)
-        #expect(voiceWake.statusText.contains("Simulator"))
+        let isSimulator =
+            ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil ||
+            ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil
+        if isSimulator {
+            #expect(voiceWake.isListening == false)
+            #expect(voiceWake.statusText.contains("Simulator"))
+        } else {
+            // On real devices this path depends on runtime permissions/hardware availability.
+            #expect(voiceWake.statusText != "Off")
+        }
 
         voiceWake.stop()
         #expect(voiceWake.statusText == "Off")

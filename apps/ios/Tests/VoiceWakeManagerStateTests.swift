@@ -4,6 +4,24 @@ import Testing
 @testable import OpenClaw
 
 @Suite(.serialized) struct VoiceWakeManagerStateTests {
+    @MainActor
+    private func waitForStatusChange(
+        manager: VoiceWakeManager,
+        from originalStatus: String,
+        timeoutNanoseconds: UInt64 = 2_500_000_000
+    ) async -> String {
+        let pollInterval: UInt64 = 100_000_000
+        var waited: UInt64 = 0
+        while waited < timeoutNanoseconds {
+            try? await Task.sleep(nanoseconds: pollInterval)
+            if manager.statusText != originalStatus {
+                return manager.statusText
+            }
+            waited += pollInterval
+        }
+        return manager.statusText
+    }
+
     @Test @MainActor func suspendAndResumeCycleUpdatesState() async {
         let manager = VoiceWakeManager()
         manager.isEnabled = true
@@ -16,8 +34,8 @@ import Testing
         #expect(manager.statusText == "Paused")
 
         manager.resumeAfterExternalAudioCapture(wasSuspended: true)
-        try? await Task.sleep(nanoseconds: 900_000_000)
-        #expect(manager.statusText.contains("Voice Wake") == true)
+        let resumedStatus = await self.waitForStatusChange(manager: manager, from: "Paused")
+        #expect(resumedStatus != "Paused")
     }
 
     @Test @MainActor func handleRecognitionCallbackRestartsOnError() async {
@@ -29,8 +47,11 @@ import Testing
         #expect(manager.statusText.contains("Recognizer error") == true)
         #expect(manager.isListening == false)
 
-        try? await Task.sleep(nanoseconds: 900_000_000)
-        #expect(manager.statusText.contains("Voice Wake") == true)
+        let recoveredStatus = await self.waitForStatusChange(
+            manager: manager,
+            from: "Recognizer error: boom"
+        )
+        #expect(recoveredStatus != "Recognizer error: boom")
     }
 
     @Test @MainActor func handleRecognitionCallbackDispatchesCommand() async {

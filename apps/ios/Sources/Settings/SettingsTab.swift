@@ -417,9 +417,7 @@ struct SettingsTab: View {
                         }
                         return
                     }
-                    await MainActor.run {
-                        self.gatewayController.refreshActiveGatewayRegistrationFromSettings()
-                    }
+                    self.gatewayController.refreshActiveGatewayRegistrationFromSettings()
                 }
                 .onChange(of: self.locationSceneModeRaw) { _, _ in
                     self.appModel.refreshSceneModeOnSettingsChange(forceLocationFetch: true)
@@ -605,10 +603,6 @@ struct SettingsTab: View {
             help: "Keeps the screen awake while OpenClaw is open.")
 
         DisclosureGroup("Advanced") {
-            self.featureToggle(
-                "Voice Directive Hint",
-                isOn: self.$talkVoiceDirectiveHintEnabled,
-                help: "Adds voice-switching instructions to Talk prompts. Disable to reduce prompt size.")
             self.featureToggle(
                 "Show Talk Button",
                 isOn: self.$talkButtonEnabled,

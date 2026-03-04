@@ -77,6 +77,25 @@ private final class MockWatchMessagingService: @preconcurrency WatchMessagingSer
 }
 
 @Suite(.serialized) struct NodeAppModelInvokeTests {
+    @MainActor
+    private func waitForQueuedWatchReplies(
+        _ appModel: NodeAppModel,
+        expectedCount: Int,
+        timeoutNanoseconds: UInt64 = 1_000_000_000
+    ) async -> Int {
+        let pollInterval: UInt64 = 50_000_000
+        var waited: UInt64 = 0
+        while waited < timeoutNanoseconds {
+            let current = appModel._test_queuedWatchReplyCount()
+            if current == expectedCount {
+                return current
+            }
+            try? await Task.sleep(nanoseconds: pollInterval)
+            waited += pollInterval
+        }
+        return appModel._test_queuedWatchReplyCount()
+    }
+
     @Test @MainActor func decodeParamsFailsWithoutJSON() {
         #expect(throws: Error.self) {
             _ = try NodeAppModel._test_decodeParams(OpenClawCanvasNavigateParams.self, from: nil)
@@ -394,7 +413,8 @@ private final class MockWatchMessagingService: @preconcurrency WatchMessagingSer
                 note: nil,
                 sentAtMs: 1234,
                 transport: "transferUserInfo"))
-        #expect(appModel._test_queuedWatchReplyCount() == 1)
+        let queued = await self.waitForQueuedWatchReplies(appModel, expectedCount: 1)
+        #expect(queued == 1)
     }
 
     @Test @MainActor func handleDeepLinkSetsErrorWhenNotConnected() async {
